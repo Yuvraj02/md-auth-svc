@@ -1,0 +1,129 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-service-config
+  labels:
+    app: auth-service
+data:
+  APP_ENV: "production"
+  SERVICE_NAME: "auth-service"
+  GRPC_PORT: "50051"
+  DATABASE_HOST: "auth-postgres"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "marketing_digest_auth"
+  DATABASE_USER: "auth"
+  DATABASE_SSLMODE: "require"
+  SHUTDOWN_TIMEOUT: "15s"
+---
+# Secret values are referenced — never commit real credentials.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: auth-service-secrets
+  labels:
+    app: auth-service
+type: Opaque
+stringData:
+  DATABASE_PASSWORD: "REPLACE_VIA_SEALED_SECRETS_OR_EXTERNAL_SECRETS"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: auth-service-migrate
+  labels:
+    app: auth-service
+    component: migrate
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app: auth-service
+        component: migrate
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: atlas
+          image: arigaio/atlas:latest
+          args:
+            - migrate
+            - apply
+            - --dir
+            - file:///migrations
+            - --url
+            - $(DATABASE_URL)
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auth-service-db-url
+                  key: url
+          volumeMounts:
+            - name: migrations
+              mountPath: /migrations
+              readOnly: true
+      volumes:
+        - name: migrations
+          configMap:
+            name: auth-service-migrations
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  labels:
+    app: auth-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: auth-service
+          image: marketing-digest-auth-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: grpc
+              containerPort: 50051
+          envFrom:
+            - configMapRef:
+                name: auth-service-config
+            - secretRef:
+                name: auth-service-secrets
+          readinessProbe:
+            grpc:
+              port: 50051
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            grpc:
+              port: 50051
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  labels:
+    app: auth-service
+spec:
+  selector:
+    app: auth-service
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
