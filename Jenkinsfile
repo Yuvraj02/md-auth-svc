@@ -1,7 +1,8 @@
 // Pipeline for md-auth-svc (service repo root = workspace).
 // Flow: build/push image -> k8s Atlas Job -> bump md-helm-values image.tag (Argo CD)
 //
-// Credentials: kubeconfig-prod (file), github-helm-values (username/token)
+// Credentials: github-helm-values (username/token)
+// Cluster access: /var/jenkins_home/.kube/config on the Jenkins host (no Jenkins credential needed)
 // Cluster Secret: auth-service-db-url (key: url) in ns marketing-digest
 //
 // Jenkins itself runs in Docker with docker.sock. Sibling containers must mount the
@@ -154,24 +155,26 @@ EOF
 
     stage('Migrate (k8s Job)') {
       steps {
-        withCredentials([file(credentialsId: 'kubeconfig-prod', variable: 'KUBECONFIG')]) {
-          sh '''
-            set -euo pipefail
-            JOB_NAME="auth-migrate-${IMAGE_TAG}"
-            IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
+        sh '''
+          set -euo pipefail
+          export KUBECONFIG=/var/jenkins_home/.kube/config
+          test -f "$KUBECONFIG"
+          command -v kubectl >/dev/null
 
-            kubectl -n "${K8S_NAMESPACE}" delete job "${JOB_NAME}" --ignore-not-found
-            sed -e "s|__JOB_NAME__|${JOB_NAME}|g" -e "s|__IMAGE__|${IMAGE}|g" \
-              "${MIGRATE_JOB_TMPL}" | kubectl apply -f -
+          JOB_NAME="auth-migrate-${IMAGE_TAG}"
+          IMAGE="${IMAGE_REPO}:${IMAGE_TAG}"
 
-            if ! kubectl -n "${K8S_NAMESPACE}" wait --for=condition=complete "job/${JOB_NAME}" --timeout=300s; then
-              kubectl -n "${K8S_NAMESPACE}" logs "job/${JOB_NAME}" || true
-              kubectl -n "${K8S_NAMESPACE}" describe "job/${JOB_NAME}" || true
-              exit 1
-            fi
+          kubectl -n "${K8S_NAMESPACE}" delete job "${JOB_NAME}" --ignore-not-found
+          sed -e "s|__JOB_NAME__|${JOB_NAME}|g" -e "s|__IMAGE__|${IMAGE}|g" \
+            "${MIGRATE_JOB_TMPL}" | kubectl apply -f -
+
+          if ! kubectl -n "${K8S_NAMESPACE}" wait --for=condition=complete "job/${JOB_NAME}" --timeout=300s; then
             kubectl -n "${K8S_NAMESPACE}" logs "job/${JOB_NAME}" || true
-          '''
-        }
+            kubectl -n "${K8S_NAMESPACE}" describe "job/${JOB_NAME}" || true
+            exit 1
+          fi
+          kubectl -n "${K8S_NAMESPACE}" logs "job/${JOB_NAME}" || true
+        '''
       }
     }
 
