@@ -1,9 +1,7 @@
 SERVICE=auth-service
 BIN=bin/auth-service
 DOCKER_IMAGE?=marketing-digest-auth-service
-ROOT:=$(shell git -C ../.. rev-parse --show-toplevel 2>/dev/null || realpath ../../..)
-# Workspace root containing backend/ and protos/
-WS_ROOT:=$(abspath ../../..)
+WS_ROOT:=$(abspath .)
 
 .PHONY: build test lint run docker-build atlas-diff atlas-lint atlas-validate atlas-hash tidy
 
@@ -24,7 +22,7 @@ run: build
 	set -a && [ -f .env ] && . ./.env; set +a; ./$(BIN)
 
 docker-build:
-	docker build -f $(abspath Dockerfile) -t $(DOCKER_IMAGE) $(WS_ROOT)
+	docker build -t $(DOCKER_IMAGE) $(WS_ROOT)
 
 atlas-hash:
 	atlas migrate hash --dir file://migrations
